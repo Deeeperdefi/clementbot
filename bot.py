@@ -67,13 +67,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text="▶️ Starting alert monitoring...")
             # Start the main_loop as a background task
             monitoring_task = asyncio.create_task(main_loop(context.bot))
-            print("Monitoring task started.")
+            print("Monitoring task started via button.")
     
     elif query.data == 'stop_monitoring':
         if monitoring_task and not monitoring_task.done():
             monitoring_task.cancel()
             await query.edit_message_text(text="⏹️ Alert monitoring stopped.")
-            print("Monitoring task cancelled.")
+            print("Monitoring task cancelled via button.")
         else:
             await query.edit_message_text(text="ℹ️ Alert monitoring is not currently running.")
 
@@ -108,43 +108,54 @@ async def handle_transaction(tx, w3, bot):
     """Processes a single transaction to check if it's a valid purchase."""
     try:
         # We only care about transactions sent directly to our contract
-        if tx['to'] and tx['to'].lower() == TOKEN_CONTRACT_ADDRESS.lower():
+        if tx.to and tx.to.lower() == TOKEN_CONTRACT_ADDRESS.lower():
             # Check if the BNB value sent is above our minimum threshold
-            if tx['value'] >= MIN_PURCHASE_WEI:
+            if tx.value >= MIN_PURCHASE_WEI:
                 # Use the w3 instance to convert from Wei
-                bnb_value = w3.from_wei(tx['value'], 'ether')
-                tx_hash = tx['hash'].hex()
+                bnb_value = w3.from_wei(tx.value, 'ether')
+                tx_hash = tx.hash.hex()
                 print(f"✔️  Valid purchase detected! Hash: {tx_hash}, Amount: {bnb_value} BNB")
                 await send_telegram_alert(bot, bnb_value, tx_hash)
     except Exception as e:
         print(f"⚠️ Could not process transaction {tx.get('hash', 'N/A').hex()}. Error: {e}")
 
+async def process_block(block_hash, w3, bot):
+    """Fetches a block by its hash and processes its transactions."""
+    try:
+        print(f"Processing block: {block_hash.hex()}")
+        block = await w3.eth.get_block(block_hash, full_transactions=True)
+        # Create a list of tasks to process transactions concurrently
+        tasks = [handle_transaction(tx, w3, bot) for tx in block.transactions]
+        await asyncio.gather(*tasks)
+    except Exception as e:
+        print(f"Error processing block {block_hash.hex()}: {e}")
+
 async def main_loop(bot: Bot):
-    """The main event loop that listens for new blocks and processes them."""
+    """The main event loop that listens for new blocks using a filter."""
     print("Connecting to BSC via QuickNode for monitoring...")
-    # Use the modern AsyncWeb3 with an AsyncWebsocketProvider
     w3 = AsyncWeb3(AsyncWeb3.AsyncWebsocketProvider(QUICKNODE_BSC_URL))
     
     if not await w3.is_connected():
         print("❌ Failed to connect to the BSC node in monitoring loop.")
         return
 
-    print("✅ Successfully connected to BSC. Starting blockchain monitor...")
-    last_processed_block = await w3.eth.block_number
-    print(f"Starting from block: {last_processed_block}")
+    print("✅ Successfully connected to BSC. Creating new block filter...")
+    # Create a filter to listen for new blocks
+    block_filter = await w3.eth.create_filter('latest')
+    print("✅ Block filter created. Starting monitor loop...")
 
     try:
         while True:
             try:
-                latest_block = await w3.eth.block_number
-                while last_processed_block < latest_block:
-                    block_to_process = last_processed_block + 1
-                    print(f"Scanning block {block_to_process}...")
-                    block = await w3.eth.get_block(block_to_process, full_transactions=True)
-                    tasks = [handle_transaction(tx, w3, bot) for tx in block.transactions]
-                    await asyncio.gather(*tasks)
-                    last_processed_block = block_to_process
-                await asyncio.sleep(5) # Wait before checking for new blocks
+                # Check the filter for new block hashes
+                new_blocks = await block_filter.get_new_entries()
+                if new_blocks:
+                    print(f"Found {len(new_blocks)} new block(s).")
+                    # Process each new block concurrently
+                    await asyncio.gather(*(process_block(block_hash, w3, bot) for block_hash in new_blocks))
+                
+                # Wait a short interval before checking the filter again
+                await asyncio.sleep(2)
             except asyncio.CancelledError:
                 print("Monitoring loop cancelled.")
                 break # Exit the loop if cancelled
