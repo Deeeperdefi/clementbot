@@ -22,7 +22,8 @@ TOKEN_CONTRACT_ADDRESS = "0x2119de8f257d27662991198389E15Bf8d1F4aB24"
 MIN_PURCHASE_BNB = 0.025
 TOKEN_LOGO_URL = "https://www.agamacoin.com/agama-logo-new.png"
 TOKEN_NAME = "AgamaCoin"
-BSCSCAN_TOKEN_URL = f"https://bscscan.com/token/{TOKEN_CONTRACT_ADDRESS}"
+# UPDATED: This URL now points to your main website for the buy button
+BSCSCAN_TOKEN_URL = "https://www.agamacoin.com/"
 # Use the static method from the base Web3 class for conversion
 MIN_PURCHASE_WEI = Web3.to_wei(MIN_PURCHASE_BNB, 'ether')
 REMINDER_INTERVAL_SECONDS = 600 # 10 minutes
@@ -179,7 +180,8 @@ async def reminder_loop(bot: Bot):
 async def price_alert_loop(bot: Bot):
     """The main event loop that listens for new blocks and transactions."""
     print("Connecting to BSC for price alerts...")
-    w3 = AsyncWeb3(AsyncWeb3.AsyncWebsocketProvider(QUICKNODE_BSC_URL))
+    # CORRECTED: Use from_uri() to let web3.py select the correct async provider
+    w3 = AsyncWeb3.from_uri(QUICKNODE_BSC_URL)
     
     if not await w3.is_connected():
         print("❌ Failed to connect to the BSC node for price alerts.")
